@@ -1,0 +1,30 @@
+name: bios-boot-check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  bios-boot-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: install os deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y grub-pc-bin grub-common xorriso mtools qemu-system-x86
+
+      - name: map grub-mkrescue name expected by scripts
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          ln -sf "$(command -v grub-mkrescue)" "$HOME/.local/bin/i686-elf-grub-mkrescue"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: run bios boot check
+        run: bash tests/workflow/boot_bios_check.sh

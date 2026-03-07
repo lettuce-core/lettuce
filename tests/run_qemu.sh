@@ -2,11 +2,11 @@
 set -euo pipefail
 
 # usage:
-#   scripts/run_qemu.sh            ; default: bios
-#   scripts/run_qemu.sh bios
-#   scripts/run_qemu.sh uefi
-#   scripts/run_qemu.sh uefi 1G
-#   scripts/run_qemu.sh bios 256M
+#   tests/run_qemu.sh             ; auto-detect last built mode, 512M
+#   tests/run_qemu.sh bios
+#   tests/run_qemu.sh uefi
+#   tests/run_qemu.sh uefi 1G
+#   tests/run_qemu.sh bios 256M
 
 MODE="${1:-auto}"
 MEMORY="${2:-512M}"

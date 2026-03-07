@@ -1,0 +1,19 @@
+name: kernel-check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  kernel-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: check kernel target
+        run: bash tests/workflow/kernel_check.sh

@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # usage:
-#   scripts/build_iso.sh            ; default: bios
-#   scripts/build_iso.sh bios
-#   scripts/build_iso.sh uefi
+#   tests/build_iso.sh            ; default: bios
+#   tests/build_iso.sh bios
+#   tests/build_iso.sh uefi
 MODE="${1:-bios}"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

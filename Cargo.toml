@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "kernel",
+  "tools/local-tests",
 ]
 resolver = "2"
 
