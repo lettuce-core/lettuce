@@ -47,6 +47,16 @@ gdt64_desc:
     .word gdt64_end - gdt64 - 1
     .quad gdt64
 
+.section .bss
+.align 16
+idt64_table:
+    .skip 4096
+
+.section .data
+idt64_desc:
+    .word 4096 - 1
+    .quad idt64_table
+
 .section .text
 .code32
 
@@ -94,3 +104,66 @@ enable_long_mode:
     mov cr0, eax
 
     ret
+
+.code64
+setup_syscall_entry:
+    lea rax, [rip + syscall_int80_handler]
+
+    // offset low (bits 0..15)
+    mov word ptr [idt64_table + 128 * 16 + 0], ax
+    // selector (kernel code)
+    mov word ptr [idt64_table + 128 * 16 + 2], 0x08
+    // ist
+    mov byte ptr [idt64_table + 128 * 16 + 4], 0
+    // type attr: present + dpl3 + interrupt gate
+    mov byte ptr [idt64_table + 128 * 16 + 5], 0xEE
+
+    shr rax, 16
+    // offset mid (bits 16..31)
+    mov word ptr [idt64_table + 128 * 16 + 6], ax
+    shr rax, 16
+    // offset high (bits 32..63)
+    mov dword ptr [idt64_table + 128 * 16 + 8], eax
+    // reserved
+    mov dword ptr [idt64_table + 128 * 16 + 12], 0
+
+    lidt [idt64_desc]
+    ret
+
+syscall_int80_handler:
+    // frame layout at rsp top (repr C):
+    // rax, rbx, rcx, rdx, rsi, rdi, r8, r9, r10, r11, r12, r13, r14, r15
+    push r15
+    push r14
+    push r13
+    push r12
+    push r11
+    push r10
+    push r9
+    push r8
+    push rdi
+    push rsi
+    push rdx
+    push rcx
+    push rbx
+    push rax
+
+    mov rdi, rsp
+    call syscall_entry_rust
+
+    pop rax
+    pop rbx
+    pop rcx
+    pop rdx
+    pop rsi
+    pop rdi
+    pop r8
+    pop r9
+    pop r10
+    pop r11
+    pop r12
+    pop r13
+    pop r14
+    pop r15
+
+    iretq

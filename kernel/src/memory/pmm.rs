@@ -1,6 +1,8 @@
+#![allow(dead_code)]
+
 use core::sync::atomic::{AtomicBool, Ordering};
 
-const PAGE_SIZE: usize = 4096;
+pub const PAGE_SIZE: usize = 4096;
 pub const MAX_FRAMES: usize = 32 * 1024;
 const BITMAP_WORDS: usize = MAX_FRAMES / 64;
 
@@ -25,12 +27,25 @@ pub struct PhysFrame {
 }
 
 impl PhysFrame {
-    pub fn _index(self) -> usize {
+    pub fn index(self) -> usize {
         self.index
     }
 
-    pub fn _addr(self) -> usize {
+    pub fn addr(self) -> usize {
         self.index * PAGE_SIZE
+    }
+
+    pub fn from_addr(addr: usize) -> Option<Self> {
+        if addr % PAGE_SIZE != 0 {
+            return None;
+        }
+
+        let index = addr / PAGE_SIZE;
+        if index >= MAX_FRAMES {
+            return None;
+        }
+
+        Some(Self { index })
     }
 }
 
@@ -68,8 +83,8 @@ pub fn init(config: EarlyPmmConfig) {
     unsafe {
         TOTAL_FRAMES = config.total_frames;
 
-        for word in &mut FRAME_BITMAP {
-            *word = 0;
+        for i in 0..BITMAP_WORDS {
+            FRAME_BITMAP[i] = 0;
         }
 
         for frame_idx in 0..config.reserved_frames {
@@ -80,7 +95,7 @@ pub fn init(config: EarlyPmmConfig) {
     INITIALIZED.store(true, Ordering::Release);
 }
 
-pub fn _alloc_frame() -> Result<PhysFrame, PmmError> {
+pub fn alloc_frame() -> Result<PhysFrame, PmmError> {
     ensure_initialized()?;
 
     unsafe {
@@ -105,7 +120,7 @@ pub fn _alloc_frame() -> Result<PhysFrame, PmmError> {
     Err(PmmError::OutOfMemory)
 }
 
-pub fn _free_frame(frame: PhysFrame) -> Result<(), PmmError> {
+pub fn free_frame(frame: PhysFrame) -> Result<(), PmmError> {
     ensure_initialized()?;
 
     unsafe {

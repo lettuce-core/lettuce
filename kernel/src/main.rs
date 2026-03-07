@@ -9,6 +9,7 @@ mod memory;
 
 mod console;
 mod serial;
+mod syscall;
 mod vga;
 
 #[cfg(target_arch = "x86_64")]
@@ -28,19 +29,31 @@ core::arch::global_asm!(
 );
 
 #[no_mangle]
-pub extern "C" fn rust_main(boot_magic: u32) -> ! {
+pub extern "C" fn rust_main(boot_magic: u32, boot_info_ptr: u32) -> ! {
     let boot_report = boot::source::BootReport::detect(boot_magic);
     let memory_report = memory::init();
+    let syscall_report = syscall::init();
+    let boot_info_state = if boot_info_ptr == 0 {
+        "boot info ptr: missing"
+    } else {
+        "boot info ptr: present"
+    };
 
     console::init();
     console::clear_screen(0x1f);
-    console::write_line(0, config::OS_NAME);
-    console::write_line(1, "kernel is working");
-    console::write_line(3, memory_report.label());
 
-    console::write_line(5, boot_report.source_label());
-    console::write_line(6, boot_report.validation_label());
-    console::write_line(8, "boot path reached rust_main()");
+    let mut row = 0usize;
+    write_boot_line(&mut row, config::OS_NAME);
+    write_boot_line(&mut row, "kernel is working");
+    write_boot_line(&mut row, memory_report.label());
+    write_boot_line(&mut row, syscall_report.label());
+    write_boot_line(&mut row, "syscall: int80 entry wired");
+    row += 1;
+    write_boot_line(&mut row, boot_report.source_label());
+    write_boot_line(&mut row, boot_report.validation_label());
+    write_boot_line(&mut row, boot_info_state);
+    row += 1;
+    write_boot_line(&mut row, "boot path reached rust_main()");
 
     halt_forever()
 }
@@ -63,4 +76,9 @@ fn halt_forever() -> ! {
         #[cfg(not(target_arch = "x86_64"))]
         core::hint::spin_loop();
     }
+}
+
+fn write_boot_line(row: &mut usize, msg: &str) {
+    console::write_line(*row, msg);
+    *row += 1;
 }

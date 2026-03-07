@@ -17,6 +17,7 @@ _start:
 long_mode_start:
     mov rsp, offset stack64_top
     xor rbp, rbp
+    call setup_syscall_entry
     mov edi, dword ptr [boot_magic_value]
     mov esi, dword ptr [boot_info_ptr_value]
     call rust_main
