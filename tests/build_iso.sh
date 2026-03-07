@@ -44,7 +44,10 @@ command -v mformat >/dev/null 2>&1 || {
 }
 
 mkdir -p "${ISO_ROOT}/boot/grub"
-RUSTC="${RUSTC_BIN}" rustup run stable cargo build -p lettuce-kernel --target x86_64-unknown-none
+rustup target add --toolchain stable x86_64-unknown-none
+env -u RUSTDOC -u RUSTFLAGS -u CARGO_BUILD_TARGET \
+  RUSTC="${RUSTC_BIN}" \
+  rustup run stable cargo build -p lettuce-kernel --target x86_64-unknown-none
 
 cp "${KERNEL_ELF}" "${ISO_ROOT}/boot/lettuce-kernel"
 cp "${ROOT_DIR}/boot/grub/grub.cfg" "${ISO_ROOT}/boot/grub/grub.cfg"
