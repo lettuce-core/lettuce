@@ -30,8 +30,10 @@ core::arch::global_asm!(
 
 #[no_mangle]
 pub extern "C" fn rust_main(boot_magic: u32, boot_info_ptr: u32) -> ! {
+    console::init();
+
     let boot_report = boot::source::BootReport::detect(boot_magic);
-    let memory_report = memory::init();
+    let memory_report = memory::init(boot_info_ptr as usize);
     let syscall_report = syscall::init();
 
     let boot_info_state = match boot_info_ptr {
@@ -40,7 +42,6 @@ pub extern "C" fn rust_main(boot_magic: u32, boot_info_ptr: u32) -> ! {
     };
     let boot_info_parse = parse_boot_info_label(boot_info_ptr as usize);
 
-    console::init();
     console::clear_screen(0x1f);
 
     let mut row = 0usize;
@@ -49,6 +50,7 @@ pub extern "C" fn rust_main(boot_magic: u32, boot_info_ptr: u32) -> ! {
     row += 1;
 
     write_boot_line(&mut row, memory_report.label());
+    write_boot_line(&mut row, memory_report.probe_label());
     write_boot_line(&mut row, syscall_report.label());
     write_boot_line(&mut row, "syscall: int80 entry wired");
     row += 1;

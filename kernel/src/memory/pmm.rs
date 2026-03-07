@@ -22,6 +22,24 @@ impl Default for EarlyPmmConfig {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MemoryRegion {
+    pub start_addr: usize,
+    pub len: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReservedRange {
+    pub start_addr: usize,
+    pub len: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PmmInitInput<'a> {
+    pub available_regions: &'a [MemoryRegion],
+    pub reserved_ranges: &'a [ReservedRange],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PhysFrame {
     index: usize,
 }
@@ -82,17 +100,56 @@ pub fn init(config: EarlyPmmConfig) {
 
     unsafe {
         TOTAL_FRAMES = config.total_frames;
+        set_all_used(TOTAL_FRAMES);
+        clear_frames(0, config.total_frames);
+        set_frames(0, config.reserved_frames);
+    }
 
-        for i in 0..BITMAP_WORDS {
-            FRAME_BITMAP[i] = 0;
+    INITIALIZED.store(true, Ordering::Release);
+}
+
+pub fn init_from_memory_map(input: PmmInitInput<'_>) -> Result<(), PmmError> {
+    if INITIALIZED.load(Ordering::Acquire) {
+        return Err(PmmError::AlreadyInitialized);
+    }
+
+    let mut frame_limit = 0usize;
+
+    for region in input.available_regions {
+        let end = region
+            .start_addr
+            .saturating_add(region.len)
+            .min(MAX_FRAMES * PAGE_SIZE);
+        frame_limit = frame_limit.max(end / PAGE_SIZE);
+    }
+
+    if frame_limit == 0 {
+        return Err(PmmError::InvalidConfig);
+    }
+
+    unsafe {
+        TOTAL_FRAMES = frame_limit;
+        set_all_used(TOTAL_FRAMES);
+
+        for region in input.available_regions {
+            if let Some((start_frame, end_frame)) =
+                addr_range_to_frames(region.start_addr, region.len)
+            {
+                clear_frames(start_frame, end_frame);
+            }
         }
 
-        for frame_idx in 0..config.reserved_frames {
-            bitmap_set(frame_idx);
+        for reserved in input.reserved_ranges {
+            if let Some((start_frame, end_frame)) =
+                addr_range_to_frames(reserved.start_addr, reserved.len)
+            {
+                set_frames(start_frame, end_frame);
+            }
         }
     }
 
     INITIALIZED.store(true, Ordering::Release);
+    Ok(())
 }
 
 pub fn alloc_frame() -> Result<PhysFrame, PmmError> {
@@ -141,11 +198,12 @@ pub fn stats() -> Result<PmmStats, PmmError> {
     ensure_initialized()?;
 
     unsafe {
-        let words = bitmap_words_for_total(TOTAL_FRAMES);
         let mut used = 0usize;
 
-        for i in 0..words {
-            used += FRAME_BITMAP[i].count_ones() as usize;
+        for frame in 0..TOTAL_FRAMES {
+            if bitmap_test(frame) {
+                used += 1;
+            }
         }
 
         Ok(PmmStats {
@@ -164,7 +222,55 @@ fn ensure_initialized() -> Result<(), PmmError> {
 }
 
 fn bitmap_words_for_total(total_frames: usize) -> usize {
-    (total_frames + 63) / 64
+    total_frames.div_ceil(64)
+}
+
+fn align_up(addr: usize, align: usize) -> usize {
+    (addr + (align - 1)) & !(align - 1)
+}
+
+fn align_down(addr: usize, align: usize) -> usize {
+    addr & !(align - 1)
+}
+
+fn addr_range_to_frames(start_addr: usize, len: usize) -> Option<(usize, usize)> {
+    if len == 0 {
+        return None;
+    }
+
+    let limit_addr = MAX_FRAMES * PAGE_SIZE;
+    let start = align_up(start_addr, PAGE_SIZE).min(limit_addr);
+    let end = align_down(start_addr.saturating_add(len), PAGE_SIZE).min(limit_addr);
+
+    if start >= end {
+        return None;
+    }
+
+    Some((start / PAGE_SIZE, end / PAGE_SIZE))
+}
+
+unsafe fn set_all_used(total_frames: usize) {
+    let words = bitmap_words_for_total(total_frames);
+    for i in 0..words {
+        FRAME_BITMAP[i] = u64::MAX;
+    }
+    for i in words..BITMAP_WORDS {
+        FRAME_BITMAP[i] = 0;
+    }
+}
+
+unsafe fn clear_frames(start_frame: usize, end_frame: usize) {
+    let capped_end = end_frame.min(TOTAL_FRAMES);
+    for frame in start_frame.min(capped_end)..capped_end {
+        bitmap_clear(frame);
+    }
+}
+
+unsafe fn set_frames(start_frame: usize, end_frame: usize) {
+    let capped_end = end_frame.min(TOTAL_FRAMES);
+    for frame in start_frame.min(capped_end)..capped_end {
+        bitmap_set(frame);
+    }
 }
 
 unsafe fn bitmap_set(frame_idx: usize) {

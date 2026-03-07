@@ -3,6 +3,7 @@ ENTRY(_start)
 SECTIONS
 {
   . = 1M;
+  __kernel_start = .;
 
   .multiboot_header :
   {
@@ -28,4 +29,6 @@ SECTIONS
   {
     *(.bss .bss.* COMMON)
   }
+
+  __kernel_end = .;
 }

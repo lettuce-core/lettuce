@@ -7,6 +7,7 @@ const MAX_BOOTINFO_SIZE: usize = 64 * 1024;
 const TAG_END: u32 = 0;
 const TAG_MMAP: u32 = 6;
 const TAG_FRAMEBUFFER: u32 = 8;
+const MMAP_TYPE_AVAILABLE: u32 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BootInfoError {
@@ -47,6 +48,30 @@ impl BootInfoSummary {
 pub struct TagIter<'a> {
     rem: &'a [u8],
     done: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MemoryMapHeader {
+    pub entry_size: u32,
+    pub entry_version: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MemoryMapEntry {
+    pub base_addr: u64,
+    pub length: u64,
+    pub typ: u32,
+}
+
+impl MemoryMapEntry {
+    pub fn is_available(self) -> bool {
+        self.typ == MMAP_TYPE_AVAILABLE
+    }
+}
+
+pub struct MemoryMapIter<'a> {
+    rem: &'a [u8],
+    entry_size: usize,
 }
 
 impl<'a> MultibootInfo<'a> {
@@ -95,6 +120,43 @@ impl<'a> MultibootInfo<'a> {
             tag_count,
         }
     }
+
+    pub fn total_size(&self) -> usize {
+        self.bytes.len()
+    }
+
+    pub fn memory_map(&self) -> Option<(MemoryMapHeader, MemoryMapIter<'a>)> {
+        for tag in self.tags() {
+            if tag.typ != TAG_MMAP {
+                continue;
+            }
+
+            if tag.payload.len() < 8 {
+                return None;
+            }
+
+            let entry_size = read_u32(tag.payload.as_ptr());
+            let entry_version = read_u32(unsafe { tag.payload.as_ptr().add(4) });
+            let entries = &tag.payload[8..];
+
+            if entry_size < 24 {
+                return None;
+            }
+
+            return Some((
+                MemoryMapHeader {
+                    entry_size,
+                    entry_version,
+                },
+                MemoryMapIter {
+                    rem: entries,
+                    entry_size: entry_size as usize,
+                },
+            ));
+        }
+
+        None
+    }
 }
 
 impl<'a> Iterator for TagIter<'a> {
@@ -131,6 +193,29 @@ impl<'a> Iterator for TagIter<'a> {
     }
 }
 
+impl<'a> Iterator for MemoryMapIter<'a> {
+    type Item = MemoryMapEntry;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.entry_size == 0 || self.rem.len() < self.entry_size {
+            return None;
+        }
+
+        let raw = &self.rem[..self.entry_size];
+        self.rem = &self.rem[self.entry_size..];
+
+        if raw.len() < 24 {
+            return None;
+        }
+
+        Some(MemoryMapEntry {
+            base_addr: read_u64(raw.as_ptr()),
+            length: read_u64(unsafe { raw.as_ptr().add(8) }),
+            typ: read_u32(unsafe { raw.as_ptr().add(16) }),
+        })
+    }
+}
+
 fn align_up(value: usize, align: usize) -> usize {
     (value + (align - 1)) & !(align - 1)
 }
@@ -143,4 +228,14 @@ fn read_u32(ptr: *const u8) -> u32 {
     }
 
     u32::from_le_bytes(bytes)
+}
+
+fn read_u64(ptr: *const u8) -> u64 {
+    let mut bytes = [0u8; mem::size_of::<u64>()];
+
+    unsafe {
+        bytes.copy_from_slice(slice::from_raw_parts(ptr, mem::size_of::<u64>()));
+    }
+
+    u64::from_le_bytes(bytes)
 }
