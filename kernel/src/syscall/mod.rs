@@ -1,21 +1,8 @@
 pub mod abi;
 pub mod dispatch;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SyscallInitReport {
-    pub registered_count: usize,
-}
-
-impl SyscallInitReport {
-    pub fn label(self) -> &'static str {
-        "syscall: dispatcher initialized"
-    }
-}
-
-pub fn init() -> SyscallInitReport {
-    SyscallInitReport {
-        registered_count: dispatch::REGISTERED_SYSCALLS,
-    }
+pub fn init() {
+    let _ = dispatch::REGISTERED_SYSCALLS;
 }
 
 #[repr(C)]

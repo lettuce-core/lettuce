@@ -34,38 +34,26 @@ pub extern "C" fn rust_main(boot_magic: u32, boot_info_ptr: u32) -> ! {
 
     let boot_report = boot::source::BootReport::detect(boot_magic);
     let memory_report = memory::init(boot_info_ptr as usize);
-    let syscall_report = syscall::init();
+    syscall::init();
 
-    let boot_info_state = match boot_info_ptr {
-        0 => "boot info ptr: missing",
-        _ => "boot info ptr: present",
-    };
     let boot_info_parse = parse_boot_info_label(boot_info_ptr as usize);
     let mut memory_summary = [0u8; 96];
+    let mut heap_summary = [0u8; 80];
 
     console::clear_screen(0x1f);
 
     let mut row = 0usize;
     write_boot_line(&mut row, config::OS_NAME);
-    write_boot_line(&mut row, "kernel is working");
-    row += 1;
-
-    write_boot_line(&mut row, memory_report.label());
-    write_boot_line(&mut row, memory_report.probe_label());
-    write_boot_line(&mut row, memory_report.frames_summary_line(&mut memory_summary));
+    write_boot_line(&mut row, "kernel is working properly");
     row += 1;
     
-    write_boot_line(&mut row, syscall_report.label());
-    write_boot_line(&mut row, "syscall: entry path deferred");
+    write_boot_line(&mut row, memory_report.label());
+    write_boot_line(&mut row, memory_report.frames_summary_line(&mut memory_summary));
+    write_boot_line(&mut row, memory_report.heap_summary_line(&mut heap_summary));
     row += 1;
-
+    
     write_boot_line(&mut row, boot_report.source_label());
-    write_boot_line(&mut row, boot_report.validation_label());
-    write_boot_line(&mut row, boot_info_state);
     write_boot_line(&mut row, boot_info_parse);
-    row += 1;
-
-    write_boot_line(&mut row, "boot path reached rust_main()");
 
     halt_forever()
 }

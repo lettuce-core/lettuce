@@ -32,11 +32,4 @@ impl BootReport {
             BootSource::Unknown => "boot source: unknown",
         }
     }
-
-    pub fn validation_label(&self) -> &'static str {
-        match self.source {
-            BootSource::GrubMultiboot2 => "boot validation: magic matched",
-            BootSource::Unknown => "boot validation: magic mismatch",
-        }
-    }
 }

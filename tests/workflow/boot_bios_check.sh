@@ -23,7 +23,7 @@ cleanup() {
 trap cleanup EXIT
 
 for _ in $(seq 1 30); do
-  if grep -q "boot path reached rust_main()" "${LOG_FILE}"; then
+  if grep -q "boot source: grub multiboot2" "${LOG_FILE}"; then
     echo "bios boot check passed"
     exit 0
   fi
