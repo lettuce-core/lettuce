@@ -1,8 +1,10 @@
+pub mod heap;
 pub mod layout;
 pub mod pmm;
 pub mod vmm;
 
 use layout::{MemoryLayout, MemorySpan};
+use core::alloc::Layout;
 
 unsafe extern "C" {
     static __kernel_start: u8;
@@ -15,9 +17,13 @@ pub struct MemoryInitReport {
     pub usable_frames: usize,
     pub used_frames: usize,
     pub free_frames: usize,
+    pub heap_capacity_bytes: usize,
+    pub heap_used_bytes: usize,
+    pub heap_free_bytes: usize,
     pub page_size: usize,
     pub pmm_from_mmap: bool,
     pub pmm_probe_ok: bool,
+    pub heap_probe_ok: bool,
 }
 
 impl MemoryInitReport {
@@ -37,6 +43,14 @@ impl MemoryInitReport {
         }
     }
 
+    pub fn heap_probe_label(self) -> &'static str {
+        if self.heap_probe_ok {
+            "memory: early heap alloc probe passed"
+        } else {
+            "memory: early heap alloc probe failed"
+        }
+    }
+
     pub fn frames_summary_line<'a>(self, buf: &'a mut [u8; 96]) -> &'a str {
         let mut line = FixedLineBuf::new(buf);
 
@@ -48,6 +62,19 @@ impl MemoryInitReport {
         line.push_usize(self.used_frames);
         line.push_str(" free ");
         line.push_usize(self.free_frames);
+
+        line.into_str()
+    }
+
+    pub fn heap_summary_line<'a>(self, buf: &'a mut [u8; 80]) -> &'a str {
+        let mut line = FixedLineBuf::new(buf);
+
+        line.push_str("kernel heap: capacity ");
+        line.push_usize(self.heap_capacity_bytes);
+        line.push_str(" used ");
+        line.push_usize(self.heap_used_bytes);
+        line.push_str(" free ");
+        line.push_usize(self.heap_free_bytes);
 
         line.into_str()
     }
@@ -63,15 +90,22 @@ pub fn init(boot_info_ptr: usize) -> MemoryInitReport {
     let pmm_probe_ok = pmm_probe();
     let pmm_stats = pmm::stats().expect("pmm must be initialized");
     let vmm_report = vmm::init();
+    heap::init().expect("early heap must initialize");
+    let heap_probe_ok = heap_probe();
+    let heap_stats = heap::stats().expect("heap must be initialized");
 
     MemoryInitReport {
         tracked_frames: pmm_stats.tracked_frames,
         usable_frames: pmm_stats.usable_frames,
         used_frames: pmm_stats.used_frames,
         free_frames: pmm_stats.free_frames,
+        heap_capacity_bytes: heap_stats.capacity_bytes,
+        heap_used_bytes: heap_stats.used_bytes,
+        heap_free_bytes: heap_stats.free_bytes,
         page_size: vmm_report.page_size,
         pmm_from_mmap,
         pmm_probe_ok,
+        heap_probe_ok,
     }
 }
 
@@ -104,6 +138,43 @@ fn pmm_probe() -> bool {
     };
 
     pmm::free_frame(frame_b).is_ok() && pmm::free_frame(frame_a).is_ok()
+}
+
+fn heap_probe() -> bool {
+    let layout_a = match Layout::from_size_align(32, 8) {
+        Ok(layout) => layout,
+        Err(_) => return false,
+    };
+    let layout_b = match Layout::from_size_align(64, 16) {
+        Ok(layout) => layout,
+        Err(_) => return false,
+    };
+
+    let block_a = match heap::alloc(layout_a) {
+        Ok(ptr) => ptr,
+        Err(_) => return false,
+    };
+    let block_b = match heap::alloc_zeroed(layout_b) {
+        Ok(ptr) => ptr,
+        Err(_) => return false,
+    };
+
+    if block_a.as_ptr() as usize % layout_a.align() != 0 {
+        return false;
+    }
+
+    if block_b.as_ptr() as usize % layout_b.align() != 0 {
+        return false;
+    }
+
+    for byte in 0..layout_b.size() {
+        let value = unsafe { block_b.as_ptr().add(byte).read() };
+        if value != 0 {
+            return false;
+        }
+    }
+
+    true
 }
 
 struct FixedLineBuf<'a> {
