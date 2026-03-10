@@ -52,7 +52,7 @@ pub extern "C" fn rust_main(boot_magic: u32, boot_info_ptr: u32) -> ! {
     write_boot_line(&mut row, memory_report.label());
     write_boot_line(&mut row, memory_report.probe_label());
     write_boot_line(&mut row, syscall_report.label());
-    write_boot_line(&mut row, "syscall: int80 entry wired");
+    write_boot_line(&mut row, "syscall: entry path deferred");
     row += 1;
 
     write_boot_line(&mut row, boot_report.source_label());

@@ -1,11 +1,8 @@
+pub mod layout;
 pub mod pmm;
 pub mod vmm;
 
-use crate::boot::multiboot2::MultibootInfo;
-
-const MAX_MMAP_REGIONS: usize = 64;
-const MAX_RESERVED_RANGES: usize = 4;
-const LOW_MEMORY_RESERVE: usize = 0x10_0000;
+use layout::{MemoryLayout, MemorySpan, MAX_AVAILABLE_REGIONS, MAX_RESERVED_RANGES};
 
 unsafe extern "C" {
     static __kernel_start: u8;
@@ -41,7 +38,7 @@ impl MemoryInitReport {
 }
 
 pub fn init(boot_info_ptr: usize) -> MemoryInitReport {
-    let pmm_from_mmap = try_init_pmm_from_multiboot2(boot_info_ptr).is_ok();
+    let pmm_from_mmap = try_init_pmm_from_boot_layout(boot_info_ptr).is_ok();
 
     if !pmm_from_mmap {
         pmm::init(pmm::EarlyPmmConfig::default());
@@ -61,66 +58,63 @@ pub fn init(boot_info_ptr: usize) -> MemoryInitReport {
     }
 }
 
-fn try_init_pmm_from_multiboot2(boot_info_ptr: usize) -> Result<(), ()> {
-    let info = unsafe { MultibootInfo::parse(boot_info_ptr) }.map_err(|_| ())?;
+fn try_init_pmm_from_boot_layout(boot_info_ptr: usize) -> Result<(), ()> {
+    let layout = MemoryLayout::from_boot_info(boot_info_ptr, kernel_image_span())
+        .map_err(|_| ())?;
 
-    let (_, mmap_iter) = info.memory_map().ok_or(())?;
+    let mut available_regions = [
+        pmm::MemoryRegion {
+            start_addr: 0,
+            len: 0,
+        }; MAX_AVAILABLE_REGIONS
+    ];
+    
+    let mut reserved_ranges = [
+        pmm::ReservedRange {
+            start_addr: 0,
+            len: 0,
+        }; MAX_RESERVED_RANGES
+    ];
 
-    let mut regions = [pmm::MemoryRegion {
-        start_addr: 0,
-        len: 0,
-    }; MAX_MMAP_REGIONS];
+    copy_available_regions(&mut available_regions, layout.available_regions());
+    copy_reserved_ranges(&mut reserved_ranges, layout.reserved_ranges());
 
-    let mut region_count = 0usize;
-
-    for entry in mmap_iter {
-        if !entry.is_available() {
-            continue;
+    pmm::init_from_memory_map(
+        pmm::PmmInitInput {
+            available_regions: &available_regions[..layout.available_regions().len()],
+            reserved_ranges: &reserved_ranges[..layout.reserved_ranges().len()],
         }
-
-        if region_count >= MAX_MMAP_REGIONS {
-            break;
-        }
-
-        regions[region_count] = pmm::MemoryRegion {
-            start_addr: entry.base_addr as usize,
-            len: entry.length as usize,
-        };
-        region_count += 1;
-    }
-
-    if region_count == 0 {
-        return Err(());
-    }
-
-    let kernel_start = unsafe { (&__kernel_start as *const u8) as usize };
-    let kernel_end = unsafe { (&__kernel_end as *const u8) as usize };
-
-    let mut reserved = [pmm::ReservedRange {
-        start_addr: 0,
-        len: 0,
-    }; MAX_RESERVED_RANGES];
-
-    reserved[0] = pmm::ReservedRange {
-        start_addr: 0,
-        len: LOW_MEMORY_RESERVE,
-    };
-
-    reserved[1] = pmm::ReservedRange {
-        start_addr: kernel_start,
-        len: kernel_end.saturating_sub(kernel_start),
-    };
-
-    reserved[2] = pmm::ReservedRange {
-        start_addr: boot_info_ptr,
-        len: info.total_size(),
-    };
-
-    pmm::init_from_memory_map(pmm::PmmInitInput {
-        available_regions: &regions[..region_count],
-        reserved_ranges: &reserved[..3],
-    })
+    )
     .map_err(|_| ())
+}
+
+fn kernel_image_span() -> MemorySpan {
+    let start_addr = unsafe { (&__kernel_start as *const u8) as usize };
+    let end_addr = unsafe { (&__kernel_end as *const u8) as usize };
+
+    MemorySpan::new(start_addr, end_addr.saturating_sub(start_addr))
+}
+
+fn copy_available_regions(dst: &mut [pmm::MemoryRegion], src: &[MemorySpan]) {
+    for (dst, src) in dst.iter_mut()
+        .zip(src.iter().copied()) 
+    {
+        *dst = pmm::MemoryRegion {
+            start_addr: src.start_addr,
+            len: src.len,
+        };
+    }
+}
+
+fn copy_reserved_ranges(dst: &mut [pmm::ReservedRange], src: &[MemorySpan]) {
+    for (dst, src) in dst.iter_mut()
+        .zip(src.iter().copied()) 
+    {
+        *dst = pmm::ReservedRange {
+            start_addr: src.start_addr,
+            len: src.len,
+        };
+    }
 }
 
 fn pmm_probe() -> bool {

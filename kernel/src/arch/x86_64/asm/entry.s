@@ -11,13 +11,18 @@ _start:
     call build_identity_map_2m
     call enable_long_mode
 
-    ljmp 0x08, offset long_mode_start
+    ljmp KERNEL_CS, offset long_mode_start
 
 .code64
 long_mode_start:
     mov rsp, offset stack64_top
     xor rbp, rbp
-    call setup_syscall_entry
+    mov ax, KERNEL_DS
+    mov ds, ax
+    mov es, ax
+    mov ss, ax
+    mov fs, ax
+    mov gs, ax
     mov edi, dword ptr [boot_magic_value]
     mov esi, dword ptr [boot_info_ptr_value]
     call rust_main

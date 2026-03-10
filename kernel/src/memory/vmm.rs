@@ -82,9 +82,11 @@ pub fn unmap_pages(virt_start: VirtAddr, pages: PageCount) -> Result<(), VmmErro
 
 fn ensure_initialized() -> Result<(), VmmError> {
     let initialized = unsafe { INITIALIZED };
+    
     if !initialized {
         return Err(VmmError::NotInitialized);
     }
+    
     Ok(())
 }
 
@@ -92,9 +94,11 @@ fn validate_range(virt_start: VirtAddr, pages: PageCount) -> Result<(), VmmError
     if pages.0 == 0 {
         return Err(VmmError::InvalidLength);
     }
+    
     if virt_start.0 % PAGE_SIZE != 0 {
         return Err(VmmError::InvalidAddress);
     }
+    
     Ok(())
 }
 

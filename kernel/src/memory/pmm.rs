@@ -120,6 +120,7 @@ pub fn init_from_memory_map(input: PmmInitInput<'_>) -> Result<(), PmmError> {
             .start_addr
             .saturating_add(region.len)
             .min(MAX_FRAMES * PAGE_SIZE);
+        
         frame_limit = frame_limit.max(end / PAGE_SIZE);
     }
 
@@ -184,6 +185,7 @@ pub fn free_frame(frame: PhysFrame) -> Result<(), PmmError> {
         if frame.index >= TOTAL_FRAMES {
             return Err(PmmError::OutOfRange);
         }
+        
         if !bitmap_test(frame.index) {
             return Err(PmmError::DoubleFree);
         }
