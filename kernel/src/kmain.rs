@@ -41,6 +41,7 @@ pub extern "C" fn rust_main(boot_magic: u32, boot_info_ptr: u32) -> ! {
         _ => "boot info ptr: present",
     };
     let boot_info_parse = parse_boot_info_label(boot_info_ptr as usize);
+    let mut memory_summary = [0u8; 96];
 
     console::clear_screen(0x1f);
 
@@ -51,6 +52,9 @@ pub extern "C" fn rust_main(boot_magic: u32, boot_info_ptr: u32) -> ! {
 
     write_boot_line(&mut row, memory_report.label());
     write_boot_line(&mut row, memory_report.probe_label());
+    write_boot_line(&mut row, memory_report.frames_summary_line(&mut memory_summary));
+    row += 1;
+    
     write_boot_line(&mut row, syscall_report.label());
     write_boot_line(&mut row, "syscall: entry path deferred");
     row += 1;

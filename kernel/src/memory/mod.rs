@@ -11,7 +11,8 @@ unsafe extern "C" {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MemoryInitReport {
-    pub total_frames: usize,
+    pub tracked_frames: usize,
+    pub usable_frames: usize,
     pub used_frames: usize,
     pub free_frames: usize,
     pub page_size: usize,
@@ -35,6 +36,21 @@ impl MemoryInitReport {
             "memory: pmm frame alloc/free probe failed"
         }
     }
+
+    pub fn frames_summary_line<'a>(self, buf: &'a mut [u8; 96]) -> &'a str {
+        let mut line = FixedLineBuf::new(buf);
+
+        line.push_str("memory frames: tracked ");
+        line.push_usize(self.tracked_frames);
+        line.push_str(" usable ");
+        line.push_usize(self.usable_frames);
+        line.push_str(" used ");
+        line.push_usize(self.used_frames);
+        line.push_str(" free ");
+        line.push_usize(self.free_frames);
+
+        line.into_str()
+    }
 }
 
 pub fn init(boot_info_ptr: usize) -> MemoryInitReport {
@@ -49,7 +65,8 @@ pub fn init(boot_info_ptr: usize) -> MemoryInitReport {
     let vmm_report = vmm::init();
 
     MemoryInitReport {
-        total_frames: pmm_stats.total_frames,
+        tracked_frames: pmm_stats.tracked_frames,
+        usable_frames: pmm_stats.usable_frames,
         used_frames: pmm_stats.used_frames,
         free_frames: pmm_stats.free_frames,
         page_size: vmm_report.page_size,
@@ -87,4 +104,60 @@ fn pmm_probe() -> bool {
     };
 
     pmm::free_frame(frame_b).is_ok() && pmm::free_frame(frame_a).is_ok()
+}
+
+struct FixedLineBuf<'a> {
+    bytes: &'a mut [u8],
+    len: usize,
+}
+
+impl<'a> FixedLineBuf<'a> {
+    fn new(bytes: &'a mut [u8]) -> Self {
+        Self { bytes, len: 0 }
+    }
+
+    fn push_str(&mut self, value: &str) {
+        for byte in value.bytes() {
+            if self.len >= self.bytes.len() {
+                return;
+            }
+
+            self.bytes[self.len] = byte;
+            self.len += 1;
+        }
+    }
+
+    fn push_usize(&mut self, value: usize) {
+        let mut digits = [0u8; 20];
+        let mut cursor = digits.len();
+        let mut value = value;
+
+        if value == 0 {
+            self.push_byte(b'0');
+            return;
+        }
+
+        while value > 0 && cursor > 0 {
+            cursor -= 1;
+            digits[cursor] = b'0' + (value % 10) as u8;
+            value /= 10;
+        }
+
+        for byte in &digits[cursor..] {
+            self.push_byte(*byte);
+        }
+    }
+
+    fn push_byte(&mut self, byte: u8) {
+        if self.len >= self.bytes.len() {
+            return;
+        }
+
+        self.bytes[self.len] = byte;
+        self.len += 1;
+    }
+
+    fn into_str(self) -> &'a str {
+        unsafe { core::str::from_utf8_unchecked(&self.bytes[..self.len]) }
+    }
 }

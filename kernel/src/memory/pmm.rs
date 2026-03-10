@@ -52,7 +52,8 @@ impl PhysFrame {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PmmStats {
-    pub total_frames: usize,
+    pub tracked_frames: usize,
+    pub usable_frames: usize,
     pub used_frames: usize,
     pub free_frames: usize,
 }
@@ -70,6 +71,7 @@ pub enum PmmError {
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 static mut TOTAL_FRAMES: usize = 0;
+static mut USABLE_FRAMES: usize = 0;
 static mut FRAME_BITMAP: [u64; BITMAP_WORDS] = [0; BITMAP_WORDS];
 
 pub fn init(config: EarlyPmmConfig) {
@@ -83,6 +85,8 @@ pub fn init(config: EarlyPmmConfig) {
 
     unsafe {
         TOTAL_FRAMES = config.total_frames;
+        USABLE_FRAMES = config.total_frames;
+        
         set_all_used(TOTAL_FRAMES);
         clear_frames(0, config.total_frames);
         set_frames(0, config.reserved_frames);
@@ -96,19 +100,11 @@ pub fn init_from_layout(layout: &MemoryLayout) -> Result<(), PmmError> {
         return Err(PmmError::AlreadyInitialized);
     }
 
-    let mut frame_limit = 0usize;
-
-    for span in layout.available_regions() {
-        let end = span.end_addr().min(MAX_FRAMES * PAGE_SIZE);
-        frame_limit = frame_limit.max(end / PAGE_SIZE);
-    }
-
-    if frame_limit == 0 {
-        return Err(PmmError::InvalidConfig);
-    }
+    let available = validate_available_ranges(layout.available_regions())?;
 
     unsafe {
-        TOTAL_FRAMES = frame_limit;
+        TOTAL_FRAMES = available.frame_limit;
+        USABLE_FRAMES = available.usable_frames;
         set_all_used(TOTAL_FRAMES);
 
         for span in layout.available_regions() {
@@ -175,18 +171,14 @@ pub fn stats() -> Result<PmmStats, PmmError> {
     ensure_initialized()?;
 
     unsafe {
-        let mut used = 0usize;
-
-        for frame in 0..TOTAL_FRAMES {
-            if bitmap_test(frame) {
-                used += 1;
-            }
-        }
+        let free_frames = count_free_frames(TOTAL_FRAMES);
+        let used_frames = USABLE_FRAMES.saturating_sub(free_frames);
 
         Ok(PmmStats {
-            total_frames: TOTAL_FRAMES,
-            used_frames: used,
-            free_frames: TOTAL_FRAMES - used,
+            tracked_frames: TOTAL_FRAMES,
+            usable_frames: USABLE_FRAMES,
+            used_frames,
+            free_frames,
         })
     }
 }
@@ -195,6 +187,7 @@ fn ensure_initialized() -> Result<(), PmmError> {
     if !INITIALIZED.load(Ordering::Acquire) {
         return Err(PmmError::NotInitialized);
     }
+    
     Ok(())
 }
 
@@ -226,11 +219,53 @@ fn span_to_frame_range(span: MemorySpan) -> Option<(usize, usize)> {
     Some((start / PAGE_SIZE, end / PAGE_SIZE))
 }
 
+fn validate_available_ranges(spans: &[MemorySpan]) -> Result<AvailableFrameSummary, PmmError> {
+    let mut previous_end = 0usize;
+    let mut frame_limit = 0usize;
+    let mut usable_frames = 0usize;
+    let mut saw_range = false;
+
+    for span in spans {
+        let (start_frame, end_frame) = span_to_frame_range(*span).ok_or(PmmError::InvalidConfig)?;
+
+        if saw_range && start_frame < previous_end {
+            return Err(PmmError::InvalidConfig);
+        }
+
+        usable_frames = usable_frames.saturating_add(end_frame.saturating_sub(start_frame));
+        frame_limit = frame_limit.max(end_frame);
+        previous_end = end_frame;
+        saw_range = true;
+    }
+
+    if !saw_range || usable_frames == 0 || frame_limit == 0 {
+        return Err(PmmError::InvalidConfig);
+    }
+
+    Ok(AvailableFrameSummary {
+        frame_limit,
+        usable_frames,
+    })
+}
+
+unsafe fn count_free_frames(total_frames: usize) -> usize {
+    let mut free_frames = 0usize;
+
+    for frame in 0..total_frames {
+        if !bitmap_test(frame) {
+            free_frames += 1;
+        }
+    }
+
+    free_frames
+}
+
 unsafe fn set_all_used(total_frames: usize) {
     let words = bitmap_words_for_total(total_frames);
     for i in 0..words {
         FRAME_BITMAP[i] = u64::MAX;
     }
+    
     for i in words..BITMAP_WORDS {
         FRAME_BITMAP[i] = 0;
     }
@@ -267,4 +302,10 @@ unsafe fn bitmap_test(frame_idx: usize) -> bool {
 
 fn split_index(frame_idx: usize) -> (usize, usize) {
     (frame_idx / 64, frame_idx % 64)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AvailableFrameSummary {
+    frame_limit: usize,
+    usable_frames: usize,
 }
