@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use super::layout::{MemoryLayout, MemorySpan};
 use core::sync::atomic::{AtomicBool, Ordering};
 
 pub const PAGE_SIZE: usize = 4096;
@@ -19,24 +20,6 @@ impl Default for EarlyPmmConfig {
             reserved_frames: 1024,
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct MemoryRegion {
-    pub start_addr: usize,
-    pub len: usize,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ReservedRange {
-    pub start_addr: usize,
-    pub len: usize,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PmmInitInput<'a> {
-    pub available_regions: &'a [MemoryRegion],
-    pub reserved_ranges: &'a [ReservedRange],
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -108,19 +91,15 @@ pub fn init(config: EarlyPmmConfig) {
     INITIALIZED.store(true, Ordering::Release);
 }
 
-pub fn init_from_memory_map(input: PmmInitInput<'_>) -> Result<(), PmmError> {
+pub fn init_from_layout(layout: &MemoryLayout) -> Result<(), PmmError> {
     if INITIALIZED.load(Ordering::Acquire) {
         return Err(PmmError::AlreadyInitialized);
     }
 
     let mut frame_limit = 0usize;
 
-    for region in input.available_regions {
-        let end = region
-            .start_addr
-            .saturating_add(region.len)
-            .min(MAX_FRAMES * PAGE_SIZE);
-        
+    for span in layout.available_regions() {
+        let end = span.end_addr().min(MAX_FRAMES * PAGE_SIZE);
         frame_limit = frame_limit.max(end / PAGE_SIZE);
     }
 
@@ -132,18 +111,14 @@ pub fn init_from_memory_map(input: PmmInitInput<'_>) -> Result<(), PmmError> {
         TOTAL_FRAMES = frame_limit;
         set_all_used(TOTAL_FRAMES);
 
-        for region in input.available_regions {
-            if let Some((start_frame, end_frame)) =
-                addr_range_to_frames(region.start_addr, region.len)
-            {
+        for span in layout.available_regions() {
+            if let Some((start_frame, end_frame)) = span_to_frame_range(*span) {
                 clear_frames(start_frame, end_frame);
             }
         }
 
-        for reserved in input.reserved_ranges {
-            if let Some((start_frame, end_frame)) =
-                addr_range_to_frames(reserved.start_addr, reserved.len)
-            {
+        for span in layout.reserved_ranges() {
+            if let Some((start_frame, end_frame)) = span_to_frame_range(*span) {
                 set_frames(start_frame, end_frame);
             }
         }
@@ -235,14 +210,14 @@ fn align_down(addr: usize, align: usize) -> usize {
     addr & !(align - 1)
 }
 
-fn addr_range_to_frames(start_addr: usize, len: usize) -> Option<(usize, usize)> {
-    if len == 0 {
+fn span_to_frame_range(span: MemorySpan) -> Option<(usize, usize)> {
+    if span.len == 0 {
         return None;
     }
 
     let limit_addr = MAX_FRAMES * PAGE_SIZE;
-    let start = align_up(start_addr, PAGE_SIZE).min(limit_addr);
-    let end = align_down(start_addr.saturating_add(len), PAGE_SIZE).min(limit_addr);
+    let start = align_up(span.start_addr, PAGE_SIZE).min(limit_addr);
+    let end = align_down(span.end_addr(), PAGE_SIZE).min(limit_addr);
 
     if start >= end {
         return None;
