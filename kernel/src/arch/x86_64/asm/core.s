@@ -51,6 +51,16 @@ gdt64_desc:
     .word gdt64_end - gdt64 - 1
     .quad gdt64
 
+.section .bss
+.align 16
+idt64_table:
+    .skip 4096
+
+.section .data
+idt64_desc:
+    .word 4096 - 1
+    .quad idt64_table
+
 .section .text
 .code32
 
@@ -98,3 +108,75 @@ enable_long_mode:
     mov cr0, eax
 
     ret
+
+.code64
+.global idt_set_gate
+idt_set_gate:
+    movzx eax, dil
+    shl rax, 4
+    lea rcx, [rip + idt64_table]
+    add rcx, rax
+
+    mov rax, rsi
+    mov word ptr [rcx + 0], ax
+    mov word ptr [rcx + 2], KERNEL_CS
+    mov byte ptr [rcx + 4], 0
+    mov byte ptr [rcx + 5], dl
+    shr rax, 16
+    mov word ptr [rcx + 6], ax
+    shr rax, 16
+    mov dword ptr [rcx + 8], eax
+    mov dword ptr [rcx + 12], 0
+    ret
+
+.global idt_load
+idt_load:
+    lidt [idt64_desc]
+    ret
+
+.macro enter_exception_common vector:req, has_error:req, read_cr2:req
+    mov r8, rsp
+    mov rdi, \vector
+
+    .if \has_error
+        mov rsi, [r8 + 0]
+        mov rdx, [r8 + 8]
+    .else
+        xor rsi, rsi
+        mov rdx, [r8 + 0]
+    .endif
+
+    .if \read_cr2
+        mov rcx, cr2
+    .else
+        xor rcx, rcx
+    .endif
+
+    and rsp, -16
+    sub rsp, 8
+    call exception_entry_rust
+1:
+    cli
+    hlt
+    jmp 1b
+.endm
+
+.global exc_divide_error_stub
+exc_divide_error_stub:
+    enter_exception_common 0, 0, 0
+
+.global exc_invalid_opcode_stub
+exc_invalid_opcode_stub:
+    enter_exception_common 6, 0, 0
+
+.global exc_double_fault_stub
+exc_double_fault_stub:
+    enter_exception_common 8, 1, 0
+
+.global exc_general_protection_stub
+exc_general_protection_stub:
+    enter_exception_common 13, 1, 0
+
+.global exc_page_fault_stub
+exc_page_fault_stub:
+    enter_exception_common 14, 1, 1
