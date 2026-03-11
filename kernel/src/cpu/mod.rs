@@ -1,4 +1,5 @@
 use crate::console;
+use crate::fmtbuf::FixedBuf;
 use core::fmt::Write;
 
 const GATE_INTERRUPT_DPL0: u8 = 0x8E;
@@ -38,10 +39,13 @@ pub fn init() -> CpuInitReport {
         (EXCEPTION_PAGE_FAULT,         exc_page_fault_stub),
     ];
 
-    unsafe {
-        for &(vector, stub) in GATES {
+    for &(vector, stub) in GATES {
+        unsafe {
             idt_set_gate(vector, handler_addr(stub), GATE_INTERRUPT_DPL0);
         }
+    }
+
+    unsafe {
         idt_load();
     }
 
@@ -57,8 +61,10 @@ fn display_exception(vector: u64, error_code: u64, rip: u64, cr2: u64) {
 
     let mut b = FixedBuf::new(&mut buf);
     write!(
-        b, "rip {:#018x}  err {:#018x}", 
-        rip, error_code
+        b, 
+        "rip {:#018x}  err {:#018x}", 
+        rip, 
+        error_code
     )
     .ok();
     console::write_line(2, b.as_str());
@@ -68,7 +74,8 @@ fn display_exception(vector: u64, error_code: u64, rip: u64, cr2: u64) {
         let mut b2 = FixedBuf::new(&mut buf2);
         
         write!(
-            b2, "cr2 {:#018x}", 
+            b2, 
+            "cr2 {:#018x}", 
             cr2
         )
         .ok();
@@ -106,36 +113,5 @@ fn halt_forever() -> ! {
 
         #[cfg(not(target_arch = "x86_64"))]
         core::hint::spin_loop();
-    }
-}
-
-struct FixedBuf<'a> {
-    buf: &'a mut [u8],
-    pos: usize,
-}
-
-impl Write for FixedBuf<'_> {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        for b in s.bytes() {
-            if self.pos >= self.buf.len() {
-                return Err(core::fmt::Error);
-            }
-            
-            self.buf[self.pos] = b;
-            self.pos += 1;
-        }
-        Ok(())
-    }
-}
-
-impl<'a> FixedBuf<'a> {
-    fn new(buf: &'a mut [u8]) -> Self {
-        Self { buf, pos: 0 }
-    }
-    
-    fn as_str(&self) -> &str {
-        unsafe {
-            core::str::from_utf8_unchecked(&self.buf[..self.pos])
-        }
     }
 }

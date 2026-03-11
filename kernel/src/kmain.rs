@@ -6,6 +6,7 @@ use core::panic::PanicInfo;
 mod boot;
 mod config;
 mod cpu;
+mod fmtbuf;
 mod memory;
 
 mod console;

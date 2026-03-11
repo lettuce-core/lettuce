@@ -3,6 +3,9 @@ pub mod layout;
 pub mod pmm;
 pub mod vmm;
 
+use crate::fmtbuf::FixedBuf;
+use core::fmt::Write;
+
 use layout::{MemoryLayout, MemorySpan};
 use core::alloc::Layout;
 
@@ -42,43 +45,45 @@ impl MemoryInitReport {
     }
     
     pub fn frames_summary_line<'a>(self, buf: &'a mut [u8; 96]) -> &'a str {
-        let mut line = FixedLineBuf::new(buf);
-
-        line.push_str("memory frames: tracked ");
-        line.push_usize(self.tracked_frames);
-        line.push_str(" usable ");
-        line.push_usize(self.usable_frames);
-        line.push_str(" used ");
-        line.push_usize(self.used_frames);
-        line.push_str(" free ");
-        line.push_usize(self.free_frames);
-
-        line.into_str()
+        let mut b = FixedBuf::new(buf);
+        
+        let _ = write!(
+            b,
+            "memory frames: tracked {} usable {} used {} free {}",
+            self.tracked_frames,
+            self.usable_frames,
+            self.used_frames,
+            self.free_frames,
+        )
+        .ok();
+        b.into_str()
     }
 
     pub fn heap_summary_line<'a>(self, buf: &'a mut [u8; 80]) -> &'a str {
-        let mut line = FixedLineBuf::new(buf);
-
-        line.push_str("kernel heap: capacity ");
-        line.push_usize(self.heap_capacity_bytes);
-        line.push_str(" used ");
-        line.push_usize(self.heap_used_bytes);
-        line.push_str(" free ");
-        line.push_usize(self.heap_free_bytes);
-
-        line.into_str()
+        let mut b = FixedBuf::new(buf);
+        
+        let _ = write!(
+            b,
+            "kernel heap: capacity {} used {} free {}",
+            self.heap_capacity_bytes,
+            self.heap_used_bytes,
+            self.heap_free_bytes,
+        )
+        .ok();
+        b.into_str()
     }
 
     pub fn vmm_summary_line<'a>(self, buf: &'a mut [u8; 96]) -> &'a str {
-        let mut line = FixedLineBuf::new(buf);
-
-        line.push_str("vmm: root ");
-        line.push_hex_usize(self.kernel_root_table);
-        line.push_str(" identity ");
-        line.push_usize(self.identity_map_bytes);
-        line.push_str(" bytes");
-
-        line.into_str()
+        let mut b = FixedBuf::new(buf);
+        
+        let _ = write!(
+            b,
+            "vmm: root {:#x} identity {} bytes",
+            self.kernel_root_table,
+            self.identity_map_bytes,
+        )
+        .ok();
+        b.into_str()
     }
 
     pub fn vmm_probe_label(self) -> &'static str {
@@ -220,90 +225,5 @@ fn vmm_probe(boot_info_ptr: usize, vmm_report: vmm::VmmInitReport) -> bool {
     match vmm::identity_map_addr(vmm::PhysAddr(boot_info_ptr)) {
         Ok(va) => va.0 == boot_info_ptr,
         Err(_) => false,
-    }
-}
-
-struct FixedLineBuf<'a> {
-    bytes: &'a mut [u8],
-    len: usize,
-}
-
-impl<'a> FixedLineBuf<'a> {
-    fn new(bytes: &'a mut [u8]) -> Self {
-        Self { bytes, len: 0 }
-    }
-
-    fn push_str(&mut self, value: &str) {
-        for byte in value.bytes() {
-            if self.len >= self.bytes.len() {
-                return;
-            }
-
-            self.bytes[self.len] = byte;
-            self.len += 1;
-        }
-    }
-
-    fn push_usize(&mut self, value: usize) {
-        let mut digits = [0u8; 20];
-        let mut cursor = digits.len();
-        let mut value = value;
-
-        if value == 0 {
-            self.push_byte(b'0');
-            return;
-        }
-
-        while value > 0 && cursor > 0 {
-            cursor -= 1;
-            digits[cursor] = b'0' + (value % 10) as u8;
-            value /= 10;
-        }
-
-        for byte in &digits[cursor..] {
-            self.push_byte(*byte);
-        }
-    }
-
-    fn push_hex_usize(&mut self, value: usize) {
-        let mut digits = [0u8; 16];
-        let mut cursor = digits.len();
-        let mut value = value;
-
-        self.push_str("0x");
-
-        if value == 0 {
-            self.push_byte(b'0');
-            return;
-        }
-
-        while value > 0 && cursor > 0 {
-            cursor -= 1;
-            
-            digits[cursor] = match (value & 0xf) as u8 {
-                0..=9 => b'0' + (value & 0xf) as u8,
-                10..=15 => b'a' + ((value & 0xf) as u8 - 10),
-                _ => b'?',
-            };
-            
-            value >>= 4;
-        }
-
-        for byte in &digits[cursor..] {
-            self.push_byte(*byte);
-        }
-    }
-
-    fn push_byte(&mut self, byte: u8) {
-        if self.len >= self.bytes.len() {
-            return;
-        }
-
-        self.bytes[self.len] = byte;
-        self.len += 1;
-    }
-
-    fn into_str(self) -> &'a str {
-        unsafe { core::str::from_utf8_unchecked(&self.bytes[..self.len]) }
     }
 }
