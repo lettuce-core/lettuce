@@ -17,13 +17,19 @@ pub struct MemoryInitReport {
     pub usable_frames: usize,
     pub used_frames: usize,
     pub free_frames: usize,
+    
     pub heap_capacity_bytes: usize,
     pub heap_used_bytes: usize,
     pub heap_free_bytes: usize,
+    
     pub page_size: usize,
+    pub kernel_root_table: usize,
+    pub identity_map_bytes: usize,
+    
     pub pmm_from_mmap: bool,
     pub pmm_probe_ok: bool,
     pub heap_probe_ok: bool,
+    pub vmm_probe_ok: bool,
 }
 
 impl MemoryInitReport {
@@ -62,6 +68,26 @@ impl MemoryInitReport {
 
         line.into_str()
     }
+
+    pub fn vmm_summary_line<'a>(self, buf: &'a mut [u8; 96]) -> &'a str {
+        let mut line = FixedLineBuf::new(buf);
+
+        line.push_str("vmm: root ");
+        line.push_hex_usize(self.kernel_root_table);
+        line.push_str(" identity ");
+        line.push_usize(self.identity_map_bytes);
+        line.push_str(" bytes");
+
+        line.into_str()
+    }
+
+    pub fn vmm_probe_label(self) -> &'static str {
+        if self.vmm_probe_ok {
+            "vmm: active kernel address space verified"
+        } else {
+            "vmm: kernel address space probe failed"
+        }
+    }
 }
 
 pub fn init(boot_info_ptr: usize) -> MemoryInitReport {
@@ -74,7 +100,10 @@ pub fn init(boot_info_ptr: usize) -> MemoryInitReport {
     let pmm_probe_ok = pmm_probe();
     let pmm_stats = pmm::stats().expect("pmm must be initialized");
     let vmm_report = vmm::init();
+    
+    let vmm_probe_ok = vmm_probe(boot_info_ptr, vmm_report);
     heap::init().expect("early heap must initialize");
+    
     let heap_probe_ok = heap_probe();
     let heap_stats = heap::stats().expect("heap must be initialized");
 
@@ -83,13 +112,19 @@ pub fn init(boot_info_ptr: usize) -> MemoryInitReport {
         usable_frames: pmm_stats.usable_frames,
         used_frames: pmm_stats.used_frames,
         free_frames: pmm_stats.free_frames,
+        
         heap_capacity_bytes: heap_stats.capacity_bytes,
         heap_used_bytes: heap_stats.used_bytes,
         heap_free_bytes: heap_stats.free_bytes,
+        
         page_size: vmm_report.page_size,
+        kernel_root_table: vmm_report.kernel_root_table.0,
+        identity_map_bytes: vmm_report.identity_map_bytes,
+        
         pmm_from_mmap,
         pmm_probe_ok,
         heap_probe_ok,
+        vmm_probe_ok,
     }
 }
 
@@ -129,6 +164,7 @@ fn heap_probe() -> bool {
         Ok(layout) => layout,
         Err(_) => return false,
     };
+    
     let layout_b = match Layout::from_size_align(64, 16) {
         Ok(layout) => layout,
         Err(_) => return false,
@@ -138,6 +174,7 @@ fn heap_probe() -> bool {
         Ok(ptr) => ptr,
         Err(_) => return false,
     };
+    
     let block_b = match heap::alloc_zeroed(layout_b) {
         Ok(ptr) => ptr,
         Err(_) => return false,
@@ -159,6 +196,31 @@ fn heap_probe() -> bool {
     }
 
     true
+}
+
+// :: TODO: verify using a real kernel VA (currently checks only boot identity map)
+fn vmm_probe(boot_info_ptr: usize, vmm_report: vmm::VmmInitReport) -> bool {
+    let s = match vmm::kernel_address_space() {
+        Ok(space) => space,
+        Err(_) => return false,
+    };
+
+    if s.root_table() != vmm_report.kernel_root_table {
+        return false;
+    }
+
+    if s.identity_map_bytes() != vmm_report.identity_map_bytes {
+        return false;
+    }
+
+    if boot_info_ptr == 0 {
+        return true;
+    }
+
+    match vmm::identity_map_addr(vmm::PhysAddr(boot_info_ptr)) {
+        Ok(va) => va.0 == boot_info_ptr,
+        Err(_) => false,
+    }
 }
 
 struct FixedLineBuf<'a> {
@@ -196,6 +258,35 @@ impl<'a> FixedLineBuf<'a> {
             cursor -= 1;
             digits[cursor] = b'0' + (value % 10) as u8;
             value /= 10;
+        }
+
+        for byte in &digits[cursor..] {
+            self.push_byte(*byte);
+        }
+    }
+
+    fn push_hex_usize(&mut self, value: usize) {
+        let mut digits = [0u8; 16];
+        let mut cursor = digits.len();
+        let mut value = value;
+
+        self.push_str("0x");
+
+        if value == 0 {
+            self.push_byte(b'0');
+            return;
+        }
+
+        while value > 0 && cursor > 0 {
+            cursor -= 1;
+            
+            digits[cursor] = match (value & 0xf) as u8 {
+                0..=9 => b'0' + (value & 0xf) as u8,
+                10..=15 => b'a' + ((value & 0xf) as u8 - 10),
+                _ => b'?',
+            };
+            
+            value >>= 4;
         }
 
         for byte in &digits[cursor..] {

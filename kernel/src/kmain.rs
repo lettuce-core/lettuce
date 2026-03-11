@@ -37,8 +37,10 @@ pub extern "C" fn rust_main(boot_magic: u32, boot_info_ptr: u32) -> ! {
     syscall::init();
 
     let boot_info_parse = parse_boot_info_label(boot_info_ptr as usize);
+    
     let mut memory_summary = [0u8; 96];
     let mut heap_summary = [0u8; 80];
+    let mut vmm_summary = [0u8; 96];
 
     console::clear_screen(0x1f);
 
@@ -50,6 +52,12 @@ pub extern "C" fn rust_main(boot_magic: u32, boot_info_ptr: u32) -> ! {
     write_boot_line(&mut row, memory_report.label());
     write_boot_line(&mut row, memory_report.frames_summary_line(&mut memory_summary));
     write_boot_line(&mut row, memory_report.heap_summary_line(&mut heap_summary));
+    write_boot_line(&mut row, memory_report.vmm_summary_line(&mut vmm_summary));
+
+    if !memory_report.vmm_probe_ok {
+        write_boot_line(&mut row, memory_report.vmm_probe_label());
+    }
+
     row += 1;
     
     write_boot_line(&mut row, boot_report.source_label());
