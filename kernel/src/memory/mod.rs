@@ -34,23 +34,7 @@ impl MemoryInitReport {
             "memory: pmm initialized from early fallback config"
         }
     }
-
-    pub fn probe_label(self) -> &'static str {
-        if self.pmm_probe_ok {
-            "memory: pmm frame alloc/free probe passed"
-        } else {
-            "memory: pmm frame alloc/free probe failed"
-        }
-    }
-
-    pub fn heap_probe_label(self) -> &'static str {
-        if self.heap_probe_ok {
-            "memory: early heap alloc probe passed"
-        } else {
-            "memory: early heap alloc probe failed"
-        }
-    }
-
+    
     pub fn frames_summary_line<'a>(self, buf: &'a mut [u8; 96]) -> &'a str {
         let mut line = FixedLineBuf::new(buf);
 
