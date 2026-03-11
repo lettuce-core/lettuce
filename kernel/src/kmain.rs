@@ -6,8 +6,8 @@ use core::panic::PanicInfo;
 mod boot;
 mod config;
 mod cpu;
-mod fmtbuf;
 mod memory;
+mod fmtbuf;
 
 mod console;
 mod serial;
