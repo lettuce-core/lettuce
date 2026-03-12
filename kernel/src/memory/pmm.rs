@@ -7,6 +7,12 @@ pub const MAX_FRAMES: usize = 32 * 1024;
 const BITMAP_WORDS: usize = MAX_FRAMES / 64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AvailableFrameSummary {
+    frame_limit: usize,
+    usable_frames: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EarlyPmmConfig {
     pub total_frames: usize,
     pub reserved_frames: usize,
@@ -27,10 +33,6 @@ pub struct PhysFrame {
 }
 
 impl PhysFrame {
-    pub fn _index(self) -> usize {
-        self.index
-    }
-
     pub fn addr(self) -> usize {
         self.index * PAGE_SIZE
     }
@@ -250,6 +252,24 @@ unsafe fn count_free_frames(total_frames: usize) -> usize {
         .sum()
 }
 
+unsafe fn clear_frames(start_frame: usize, end_frame: usize) {
+    apply_frames(
+        start_frame, 
+        end_frame, 
+        |word, mask| 
+        word & !mask
+    )
+}
+
+unsafe fn set_frames(start_frame: usize, end_frame: usize) {
+    apply_frames(
+        start_frame, 
+        end_frame, 
+        |word, mask| 
+        word | mask
+    )
+}
+
 unsafe fn set_all_used(total_frames: usize) {
     let words = bitmap_words_for_total(total_frames);
     for i in 0..words {
@@ -261,19 +281,38 @@ unsafe fn set_all_used(total_frames: usize) {
     }
 }
 
-// :: todo: bulk word operations for large ranges
-unsafe fn clear_frames(start_frame: usize, end_frame: usize) {
-    let capped_end = end_frame.min(TOTAL_FRAMES);
-    for frame in start_frame.min(capped_end)..capped_end {
-        bitmap_clear(frame);
-    }
-}
+unsafe fn apply_frames(
+    start_frame: usize,
+    end_frame: usize,
+    op: impl Fn(u64, u64) -> u64,
+) {
+    let start = start_frame.min(TOTAL_FRAMES);
+    let end = end_frame.min(TOTAL_FRAMES);
 
-// todo: bulk word operations for large ranges
-unsafe fn set_frames(start_frame: usize, end_frame: usize) {
-    let capped_end = end_frame.min(TOTAL_FRAMES);
-    for frame in start_frame.min(capped_end)..capped_end {
-        bitmap_set(frame);
+    if start >= end {
+        return;
+    }
+
+    let start_word = start / 64;
+    let end_word = (end - 1) / 64;
+
+    if start_word == end_word {
+        let mask = word_mask(start % 64, end % 64);
+        FRAME_BITMAP[start_word] = op(FRAME_BITMAP[start_word], mask);
+        
+        return;
+    }
+
+    let head_mask = word_mask(start % 64, 64);
+    FRAME_BITMAP[start_word] = op(FRAME_BITMAP[start_word], head_mask);
+    
+    for word in &mut FRAME_BITMAP[start_word + 1..end_word] {
+        *word = op(*word, u64::MAX);
+    }
+
+    let tail_mask = word_mask(0, end % 64);
+    if tail_mask != 0 {
+        FRAME_BITMAP[end_word] = op(FRAME_BITMAP[end_word], tail_mask);
     }
 }
 
@@ -296,8 +335,13 @@ fn split_index(frame_idx: usize) -> (usize, usize) {
     (frame_idx / 64, frame_idx % 64)
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct AvailableFrameSummary {
-    frame_limit: usize,
-    usable_frames: usize,
+// produces a bitmask with 1s in bit positions [start, end)
+// (both values must be in 0..=64)
+// 
+fn word_mask(start: usize, end: usize) -> u64 {
+    if end == 64 {
+        u64::MAX << start
+    } else {
+        ((1u64 << end) - 1) & !((1u64 << start) - 1)
+    }
 }
