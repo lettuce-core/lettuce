@@ -3,11 +3,14 @@ pub mod layout;
 pub mod pmm;
 pub mod vmm;
 
-use crate::fmtbuf::FixedBuf;
+use crate::utils::fmtbuf::FixedBuf;
 use core::fmt::Write;
 
 use layout::{MemoryLayout, MemorySpan};
 use core::alloc::Layout;
+
+const PROBE_LAYOUT_A: Layout = unsafe { Layout::from_size_align_unchecked(32, 8) };
+const PROBE_LAYOUT_B: Layout = unsafe { Layout::from_size_align_unchecked(64, 16) };
 
 unsafe extern "C" {
     static __kernel_start: u8;
@@ -45,45 +48,36 @@ impl MemoryInitReport {
     }
     
     pub fn frames_summary_line<'a>(self, buf: &'a mut [u8; 96]) -> &'a str {
-        let mut b = FixedBuf::new(buf);
-        
-        let _ = write!(
-            b,
-            "memory frames: tracked {} usable {} used {} free {}",
-            self.tracked_frames,
-            self.usable_frames,
-            self.used_frames,
-            self.free_frames,
+        fmt_line(
+            buf, format_args!(
+                "memory frames: tracked {} usable {} used {} free {}",
+                self.tracked_frames, 
+                self.usable_frames, 
+                self.used_frames, 
+                self.free_frames,
+            )
         )
-        .ok();
-        b.into_str()
     }
 
     pub fn heap_summary_line<'a>(self, buf: &'a mut [u8; 80]) -> &'a str {
-        let mut b = FixedBuf::new(buf);
-        
-        let _ = write!(
-            b,
-            "kernel heap: capacity {} used {} free {}",
-            self.heap_capacity_bytes,
-            self.heap_used_bytes,
-            self.heap_free_bytes,
+        fmt_line(
+            buf, format_args!(
+                "kernel heap: capacity {} used {} free {}",
+                self.heap_capacity_bytes,
+                self.heap_used_bytes,
+                self.heap_free_bytes,
+            )
         )
-        .ok();
-        b.into_str()
     }
 
     pub fn vmm_summary_line<'a>(self, buf: &'a mut [u8; 96]) -> &'a str {
-        let mut b = FixedBuf::new(buf);
-        
-        let _ = write!(
-            b,
-            "vmm: root {:#x} identity {} bytes",
-            self.kernel_root_table,
-            self.identity_map_bytes,
+        fmt_line(
+            buf, format_args!(
+                "vmm: root {:#x} identity {} bytes",
+                self.kernel_root_table,
+                self.identity_map_bytes,
+            )
         )
-        .ok();
-        b.into_str()
     }
 
     pub fn vmm_probe_label(self) -> &'static str {
@@ -99,7 +93,7 @@ pub fn init(boot_info_ptr: usize) -> MemoryInitReport {
     let pmm_from_mmap = try_init_pmm_from_boot_layout(boot_info_ptr).is_ok();
 
     if !pmm_from_mmap {
-        pmm::init(pmm::EarlyPmmConfig::default());
+        let _ = pmm::init(pmm::EarlyPmmConfig::default());
     }
 
     let pmm_probe_ok = pmm_probe();
@@ -161,62 +155,41 @@ fn pmm_probe() -> bool {
         }
     };
 
+    // free in reverse allocation order
     pmm::free_frame(frame_b).is_ok() && pmm::free_frame(frame_a).is_ok()
 }
 
 fn heap_probe() -> bool {
-    let layout_a = match Layout::from_size_align(32, 8) {
-        Ok(layout) => layout,
-        Err(_) => return false,
-    };
-    
-    let layout_b = match Layout::from_size_align(64, 16) {
-        Ok(layout) => layout,
-        Err(_) => return false,
-    };
-
-    let block_a = match heap::alloc(layout_a) {
+    let block_a = match heap::alloc(PROBE_LAYOUT_A) {
         Ok(ptr) => ptr,
         Err(_) => return false,
     };
     
-    let block_b = match heap::alloc_zeroed(layout_b) {
+    let block_b = match heap::alloc_zeroed(PROBE_LAYOUT_B) {
         Ok(ptr) => ptr,
         Err(_) => return false,
     };
 
-    if block_a.as_ptr() as usize % layout_a.align() != 0 {
-        return false;
-    }
+    if !is_aligned(block_a.as_ptr(), PROBE_LAYOUT_A.align()) { return false; }
+    if !is_aligned(block_b.as_ptr(), PROBE_LAYOUT_B.align()) { return false; }
 
-    if block_b.as_ptr() as usize % layout_b.align() != 0 {
-        return false;
-    }
-
-    for byte in 0..layout_b.size() {
-        let value = unsafe { block_b.as_ptr().add(byte).read() };
-        if value != 0 {
-            return false;
-        }
-    }
-
+    let slice = unsafe {
+        core::slice::from_raw_parts(block_b.as_ptr(), PROBE_LAYOUT_B.size())
+    };
+    
+    if slice.iter().any(|&b| b != 0) { return false; }
     true
 }
 
-// :: TODO: verify using a real kernel VA (currently checks only boot identity map)
+// :: todo: verify using a real kernel VA (currently checks only boot identity map)
 fn vmm_probe(boot_info_ptr: usize, vmm_report: vmm::VmmInitReport) -> bool {
     let s = match vmm::kernel_address_space() {
         Ok(space) => space,
         Err(_) => return false,
     };
 
-    if s.root_table() != vmm_report.kernel_root_table {
-        return false;
-    }
-
-    if s.identity_map_bytes() != vmm_report.identity_map_bytes {
-        return false;
-    }
+    if s.root_table() != vmm_report.kernel_root_table { return false; }
+    if s.identity_map_bytes() != vmm_report.identity_map_bytes { return false; }
 
     if boot_info_ptr == 0 {
         return true;
@@ -226,4 +199,14 @@ fn vmm_probe(boot_info_ptr: usize, vmm_report: vmm::VmmInitReport) -> bool {
         Ok(va) => va.0 == boot_info_ptr,
         Err(_) => false,
     }
+}
+
+fn is_aligned(ptr: *mut u8, align: usize) -> bool {
+    ptr as usize % align == 0
+}
+
+fn fmt_line<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a str {
+    let mut b = FixedBuf::new(buf);
+    b.write_fmt(args).ok();
+    b.into_str()
 }

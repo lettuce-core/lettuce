@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 
 use crate::memory::pmm::{PhysFrame, PAGE_SIZE};
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-// :: TODO: derive this from the real boot page tables
+// :: todo: derive this from the real boot page tables
 const BOOT_IDENTITY_MAP_BYTES: usize = 1024 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -126,10 +126,13 @@ impl MappingRequest {
         flags: MapFlags,
     ) -> Result<Self, VmmError> {
         let _ = PageRange::new(virt_start, pages)?;
-        let _ = phys_start
-            .addr()
-            .checked_add(pages.0.checked_mul(PAGE_SIZE).ok_or(VmmError::InvalidLength)?)
+
+        let phys_end = pages.0
+            .checked_mul(PAGE_SIZE)
+            .and_then(|bytes| phys_start.addr().checked_add(bytes))
             .ok_or(VmmError::InvalidLength)?;
+        
+        let _ = phys_end;
 
         Ok(Self {
             virt_start,
@@ -182,31 +185,28 @@ impl VmmInitReport {
 }
 
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
-static mut KERNEL_ADDRESS_SPACE: Option<AddressSpace> = None;
+// identity_map_bytes is a constant, so only root_table needs to be stored
+static KERNEL_ROOT_TABLE: AtomicUsize = AtomicUsize::new(0);
 
 pub fn init() -> VmmInitReport {
-    let r = VmmInitReport {
-        page_size: PAGE_SIZE,
-        kernel_root_table: PhysAddr(read_cr3_arch()),
-        identity_map_bytes: BOOT_IDENTITY_MAP_BYTES,
-    };
-
-    unsafe {
-        KERNEL_ADDRESS_SPACE = Some(AddressSpace {
-            root_table: r.kernel_root_table,
-            identity_map_bytes: r.identity_map_bytes,
-        });
-    }
-
+    let root = read_cr3_arch();
+    KERNEL_ROOT_TABLE.store(root, Ordering::Release);
     INITIALIZED.store(true, Ordering::Release);
-    r
+
+    VmmInitReport {
+        page_size: PAGE_SIZE,
+        kernel_root_table: PhysAddr(root),
+        identity_map_bytes: BOOT_IDENTITY_MAP_BYTES,
+    }
 }
 
 pub fn kernel_address_space() -> Result<AddressSpace, VmmError> {
     ensure_initialized()?;
 
-    let s = unsafe { KERNEL_ADDRESS_SPACE };
-    s.ok_or(VmmError::NotInitialized)
+    Ok(AddressSpace {
+        root_table: PhysAddr(KERNEL_ROOT_TABLE.load(Ordering::Acquire)),
+        identity_map_bytes: BOOT_IDENTITY_MAP_BYTES,
+    })
 }
 
 pub fn map_pages(
@@ -215,26 +215,18 @@ pub fn map_pages(
     pages: PageCount,
     flags: MapFlags,
 ) -> Result<(), VmmError> {
-    ensure_initialized()?;
-
     let s = kernel_address_space()?;
     let req = MappingRequest::new(virt_start, phys_start, pages, flags)?;
-
     arch_map_pages(s, req)
 }
 
 pub fn unmap_pages(virt_start: VirtAddr, pages: PageCount) -> Result<(), VmmError> {
-    ensure_initialized()?;
-
     let s = kernel_address_space()?;
     let r = PageRange::new(virt_start, pages)?;
-
     arch_unmap_pages(s, r)
 }
 
 pub fn identity_map_addr(phys_addr: PhysAddr) -> Result<VirtAddr, VmmError> {
-    ensure_initialized()?;
-
     let s = kernel_address_space()?;
     let va = VirtAddr(phys_addr.0);
 

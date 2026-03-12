@@ -29,6 +29,11 @@ impl MemorySpan {
     }
 
     fn merge(self, other: Self) -> Self {
+        debug_assert!(
+            self.end_addr() >= other.start_addr,
+            "merge called on non-overlapping spans"
+        );
+        
         let start_addr = self.start_addr.min(other.start_addr);
         let end_addr = self.end_addr().max(other.end_addr());
 
@@ -141,30 +146,24 @@ impl MemoryLayout {
     }
 
     fn finalize_available_regions(&mut self) {
+        if self.available_count == 0 { return; }
+    
         insertion_sort(&mut self.available_regions[..self.available_count]);
-
-        let mut write_index = 0usize;
-
-        for read_index in 0..self.available_count {
+    
+        let mut write_index = 1;
+    
+        for read_index in 1..self.available_count {
             let span = self.available_regions[read_index];
-
-            if write_index == 0 {
-                self.available_regions[0] = span;
-                write_index = 1;
-                continue;
-            }
-
-            let previous = self.available_regions[write_index - 1];
-
+            let previous = &mut self.available_regions[write_index - 1];
+    
             if previous.end_addr() >= span.start_addr {
-                self.available_regions[write_index - 1] = previous.merge(span);
-                continue;
+                *previous = previous.merge(span);
+            } else {
+                self.available_regions[write_index] = span;
+                write_index += 1;
             }
-
-            self.available_regions[write_index] = span;
-            write_index += 1;
         }
-
+    
         self.available_count = write_index;
     }
 }

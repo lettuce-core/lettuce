@@ -1,6 +1,5 @@
-#![allow(dead_code)]
-
 use super::layout::{MemoryLayout, MemorySpan};
+use crate::utils::{align_down, align_up};
 use core::sync::atomic::{AtomicBool, Ordering};
 
 pub const PAGE_SIZE: usize = 4096;
@@ -28,7 +27,7 @@ pub struct PhysFrame {
 }
 
 impl PhysFrame {
-    pub fn index(self) -> usize {
+    pub fn _index(self) -> usize {
         self.index
     }
 
@@ -74,14 +73,17 @@ static mut TOTAL_FRAMES: usize = 0;
 static mut USABLE_FRAMES: usize = 0;
 static mut FRAME_BITMAP: [u64; BITMAP_WORDS] = [0; BITMAP_WORDS];
 
-pub fn init(config: EarlyPmmConfig) {
+pub fn init(config: EarlyPmmConfig) -> Result<(), PmmError> {
     if INITIALIZED.load(Ordering::Acquire) {
-        return;
+        return Err(PmmError::AlreadyInitialized);
     }
 
-    assert!(config.total_frames > 0);
-    assert!(config.total_frames <= MAX_FRAMES);
-    assert!(config.reserved_frames <= config.total_frames);
+    if config.total_frames == 0
+        || config.total_frames > MAX_FRAMES
+        || config.reserved_frames > config.total_frames
+    {
+        return Err(PmmError::InvalidConfig);
+    }
 
     unsafe {
         TOTAL_FRAMES = config.total_frames;
@@ -93,6 +95,7 @@ pub fn init(config: EarlyPmmConfig) {
     }
 
     INITIALIZED.store(true, Ordering::Release);
+    Ok(())
 }
 
 pub fn init_from_layout(layout: &MemoryLayout) -> Result<(), PmmError> {
@@ -195,21 +198,13 @@ fn bitmap_words_for_total(total_frames: usize) -> usize {
     total_frames.div_ceil(64)
 }
 
-fn align_up(addr: usize, align: usize) -> usize {
-    (addr + (align - 1)) & !(align - 1)
-}
-
-fn align_down(addr: usize, align: usize) -> usize {
-    addr & !(align - 1)
-}
-
 fn span_to_frame_range(span: MemorySpan) -> Option<(usize, usize)> {
     if span.len == 0 {
         return None;
     }
 
     let limit_addr = MAX_FRAMES * PAGE_SIZE;
-    let start = align_up(span.start_addr, PAGE_SIZE).min(limit_addr);
+    let start = align_up(span.start_addr, PAGE_SIZE)?.min(limit_addr);
     let end = align_down(span.end_addr(), PAGE_SIZE).min(limit_addr);
 
     if start >= end {
@@ -249,15 +244,10 @@ fn validate_available_ranges(spans: &[MemorySpan]) -> Result<AvailableFrameSumma
 }
 
 unsafe fn count_free_frames(total_frames: usize) -> usize {
-    let mut free_frames = 0usize;
-
-    for frame in 0..total_frames {
-        if !bitmap_test(frame) {
-            free_frames += 1;
-        }
-    }
-
-    free_frames
+    FRAME_BITMAP[..bitmap_words_for_total(total_frames)]
+        .iter()
+        .map(|w| w.count_zeros() as usize)
+        .sum()
 }
 
 unsafe fn set_all_used(total_frames: usize) {
@@ -271,6 +261,7 @@ unsafe fn set_all_used(total_frames: usize) {
     }
 }
 
+// :: todo: bulk word operations for large ranges
 unsafe fn clear_frames(start_frame: usize, end_frame: usize) {
     let capped_end = end_frame.min(TOTAL_FRAMES);
     for frame in start_frame.min(capped_end)..capped_end {
@@ -278,6 +269,7 @@ unsafe fn clear_frames(start_frame: usize, end_frame: usize) {
     }
 }
 
+// todo: bulk word operations for large ranges
 unsafe fn set_frames(start_frame: usize, end_frame: usize) {
     let capped_end = end_frame.min(TOTAL_FRAMES);
     for frame in start_frame.min(capped_end)..capped_end {

@@ -1,3 +1,4 @@
+use crate::utils::align_up;
 use core::{
     alloc::Layout,
     cell::UnsafeCell,
@@ -45,10 +46,6 @@ pub fn init() -> Result<(), HeapError> {
 pub fn alloc(layout: Layout) -> Result<NonNull<u8>, HeapError> {
     ensure_initialized()?;
 
-    if layout.align() == 0 || !layout.align().is_power_of_two() {
-        return Err(HeapError::InvalidLayout);
-    }
-
     let size = layout.size();
 
     loop {
@@ -74,6 +71,9 @@ pub fn alloc_zeroed(layout: Layout) -> Result<NonNull<u8>, HeapError> {
     let ptr = alloc(layout)?;
 
     if layout.size() != 0 {
+        // explicit zeroing even though the arena is zero-initialized,
+        // in case this allocator is ever backed by non-zeroed memory
+        // 
         unsafe {
             ptr::write_bytes(ptr.as_ptr(), 0, layout.size());
         }
@@ -85,7 +85,7 @@ pub fn alloc_zeroed(layout: Layout) -> Result<NonNull<u8>, HeapError> {
 pub fn stats() -> Result<HeapStats, HeapError> {
     ensure_initialized()?;
 
-    let used_bytes = NEXT_OFFSET.load(Ordering::Acquire).min(EARLY_HEAP_CAPACITY);
+    let used_bytes = NEXT_OFFSET.load(Ordering::Acquire);
 
     Ok(HeapStats {
         capacity_bytes: EARLY_HEAP_CAPACITY,
@@ -100,10 +100,6 @@ fn ensure_initialized() -> Result<(), HeapError> {
     }
 
     Ok(())
-}
-
-fn align_up(value: usize, align: usize) -> Option<usize> {
-    value.checked_add(align - 1).map(|v| v & !(align - 1))
 }
 
 unsafe fn heap_base() -> *mut u8 {

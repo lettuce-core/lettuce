@@ -4,15 +4,12 @@
 use core::panic::PanicInfo;
 
 mod boot;
-mod config;
 mod cpu;
 mod memory;
-mod fmtbuf;
+mod utils;
 
-mod console;
-mod serial;
 mod syscall;
-mod vga;
+use crate::utils::{config, console};
 
 #[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(

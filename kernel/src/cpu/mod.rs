@@ -1,5 +1,5 @@
-use crate::console;
-use crate::fmtbuf::FixedBuf;
+use crate::utils::console;
+use crate::utils::fmtbuf::FixedBuf;
 use core::fmt::Write;
 
 const GATE_INTERRUPT_DPL0: u8 = 0x8E;

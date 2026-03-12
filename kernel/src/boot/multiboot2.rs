@@ -1,4 +1,5 @@
-use core::{mem, slice};
+use crate::utils::align_up;
+use core::slice;
 
 const HEADER_SIZE: usize = 8;
 const ALIGN: usize = 8;
@@ -79,6 +80,7 @@ impl<'a> MultibootInfo<'a> {
         if ptr == 0 {
             return Err(BootInfoError::NullPointer);
         }
+        
         if ptr % ALIGN != 0 {
             return Err(BootInfoError::MisalignedPointer);
         }
@@ -106,11 +108,11 @@ impl<'a> MultibootInfo<'a> {
 
         for tag in self.tags() {
             tag_count += 1;
-
-            if tag.typ == TAG_MMAP {
-                has_mmap = true;
-            } else if tag.typ == TAG_FRAMEBUFFER {
-                has_framebuffer = true;
+            
+            match tag.typ {
+                TAG_MMAP => has_mmap = true,
+                TAG_FRAMEBUFFER => has_framebuffer = true,
+                _ => {}
             }
         }
 
@@ -134,9 +136,9 @@ impl<'a> MultibootInfo<'a> {
             if tag.payload.len() < 8 {
                 return None;
             }
-
-            let entry_size = read_u32(tag.payload.as_ptr());
-            let entry_version = read_u32(unsafe { tag.payload.as_ptr().add(4) });
+            
+            let entry_size = read_u32(&tag.payload[0]);
+            let entry_version = read_u32(&tag.payload[4]);
             let entries = &tag.payload[8..];
 
             if entry_size < 24 {
@@ -148,6 +150,7 @@ impl<'a> MultibootInfo<'a> {
                     entry_size,
                     entry_version,
                 },
+                
                 MemoryMapIter {
                     rem: entries,
                     entry_size: entry_size as usize,
@@ -181,7 +184,10 @@ impl<'a> Iterator for TagIter<'a> {
         }
 
         let payload = &self.rem[HEADER_SIZE..size];
-        let step = align_up(size, ALIGN);
+        let Some(step) = align_up(size, ALIGN) else {
+            self.done = true;
+            return None;
+        };
 
         self.rem = if step <= self.rem.len() {
             &self.rem[step..]
@@ -216,26 +222,10 @@ impl<'a> Iterator for MemoryMapIter<'a> {
     }
 }
 
-fn align_up(value: usize, align: usize) -> usize {
-    (value + (align - 1)) & !(align - 1)
-}
-
 fn read_u32(ptr: *const u8) -> u32 {
-    let mut bytes = [0u8; mem::size_of::<u32>()];
-
-    unsafe {
-        bytes.copy_from_slice(slice::from_raw_parts(ptr, mem::size_of::<u32>()));
-    }
-
-    u32::from_le_bytes(bytes)
+    u32::from_le(unsafe { (ptr as *const u32).read_unaligned() })
 }
 
 fn read_u64(ptr: *const u8) -> u64 {
-    let mut bytes = [0u8; mem::size_of::<u64>()];
-
-    unsafe {
-        bytes.copy_from_slice(slice::from_raw_parts(ptr, mem::size_of::<u64>()));
-    }
-
-    u64::from_le_bytes(bytes)
+    u64::from_le(unsafe { (ptr as *const u64).read_unaligned() })
 }

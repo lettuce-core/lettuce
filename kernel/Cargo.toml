@@ -10,4 +10,7 @@ path = "src/kmain.rs"
 test = false
 bench = false
 
+[features]
+selftest = []
+
 [dependencies]
