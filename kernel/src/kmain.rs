@@ -5,6 +5,7 @@ use core::panic::PanicInfo;
 
 mod boot;
 mod cpu;
+mod interrupts;
 mod memory;
 mod utils;
 
@@ -24,7 +25,7 @@ core::arch::global_asm!(
     include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/src/arch/x86_64/asm/multiboot.s"
-    )),
+    )), 
 );
 
 #[no_mangle]
@@ -32,6 +33,8 @@ pub extern "C" fn rust_main(boot_magic: u32, boot_info_ptr: u32) -> ! {
     console::init();
 
     let cpu_report = cpu::init();
+    let interrupt_report = interrupts::init();
+    
     let boot_report = boot::source::BootReport::detect(boot_magic);
     let memory_report = memory::init(boot_info_ptr as usize);
     syscall::init();
@@ -47,6 +50,7 @@ pub extern "C" fn rust_main(boot_magic: u32, boot_info_ptr: u32) -> ! {
     let mut row = 0usize;
     write_boot_line(&mut row, config::OS_NAME);
     write_boot_line(&mut row, cpu_report.label());
+    write_boot_line(&mut row, interrupt_report.label());
     row += 1;
     
     write_boot_line(&mut row, memory_report.label());
