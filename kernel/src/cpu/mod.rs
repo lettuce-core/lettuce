@@ -40,9 +40,7 @@ pub fn init() -> CpuInitReport {
     ];
 
     for &(vector, stub) in GATES {
-        unsafe {
-            idt_set_gate(vector, handler_addr(stub), GATE_INTERRUPT_DPL0);
-        }
+        install_interrupt_gate(vector, stub);
     }
 
     unsafe {
@@ -50,6 +48,16 @@ pub fn init() -> CpuInitReport {
     }
 
     CpuInitReport
+}
+
+pub fn install_interrupt_gate(vector: u8, handler: unsafe extern "C" fn()) {
+    unsafe {
+        idt_set_gate(
+            vector, 
+            handler_addr(handler), 
+            GATE_INTERRUPT_DPL0
+        )
+    }
 }
 
 fn display_exception(vector: u64, error_code: u64, rip: u64, cr2: u64) {

@@ -134,6 +134,52 @@ idt_load:
     lidt [idt64_desc]
     ret
 
+.macro push_irq_regs
+    push rax
+    push rcx
+    push rdx
+    push rbx
+    push rbp
+    push rsi
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+    push r14
+    push r15
+.endm
+
+.macro pop_irq_regs
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
+    pop rbp
+    pop rbx
+    pop rdx
+    pop rcx
+    pop rax
+.endm
+
+.global irq0_stub
+irq0_stub:
+    push_irq_regs
+    mov rax, rsp
+    and rsp, -16
+    call irq0_entry_rust
+    mov rsp, rax
+    pop_irq_regs
+    iretq
+
 .macro enter_exception_common vector:req, has_error:req, read_cr2:req
     mov r8, rsp
     mov rdi, \vector
